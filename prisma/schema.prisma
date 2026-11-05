@@ -1,0 +1,244 @@
+// TODO: Verify and test database schema after implementation
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================================================
+// User & Authentication
+// ============================================================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String?   @unique
+  name          String?
+  image         String?
+  githubId      String?   @unique
+  githubUsername String?
+  githubToken   String?   // Encrypted access token
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  mascot        Mascot?
+  activities    Activity[]
+  repositories  Repository[]
+  achievements  UserAchievement[]
+
+  @@index([githubId])
+  @@index([email])
+}
+
+// ============================================================================
+// Mascot & Growth
+// ============================================================================
+
+model Mascot {
+  id          String       @id @default(cuid())
+  userId      String       @unique
+  name        String       @default("Byte")
+  stage       Int          @default(1) // Current growth stage (1-10)
+  experience  Int          @default(0) // Total XP
+  level       Int          @default(1) // Level based on XP
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  // Relations
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  comments    Comment[]
+
+  @@index([userId])
+}
+
+model MascotStage {
+  id          Int          @id
+  name        String       // e.g., "Baby Byte", "Coder Byte", "Master Byte"
+  description String
+  minLevel    Int          // Minimum level to reach this stage
+  imageUrl    String       // Path to mascot image
+  unlocked    Boolean      @default(false) // Whether this stage is unlockable
+
+  @@map("mascot_stages")
+}
+
+// ============================================================================
+// GitHub Integration
+// ============================================================================
+
+model Repository {
+  id              String    @id @default(cuid())
+  userId          String
+  githubId        Int       // GitHub repository ID
+  name            String    // e.g., "owner/repo"
+  fullName        String
+  description     String?
+  language        String?
+  stars           Int       @default(0)
+  forks           Int       @default(0)
+  isPrivate       Boolean   @default(false)
+  lastSyncedAt    DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  commits         Commit[]
+
+  @@unique([userId, githubId])
+  @@index([userId])
+  @@index([githubId])
+}
+
+model Activity {
+  id          String    @id @default(cuid())
+  userId      String
+  type        ActivityType
+  date        DateTime  @db.Date
+  count       Int       @default(0) // Number of commits, PRs, etc.
+  metadata    Json?     // Additional context
+
+  // Relations
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type, date])
+  @@index([userId])
+  @@index([date])
+}
+
+enum ActivityType {
+  COMMIT
+  PR_OPENED
+  PR_MERGED
+  PR_REVIEWED
+  ISSUE_OPENED
+  ISSUE_CLOSED
+  CODE_REVIEW
+}
+
+model Commit {
+  id              String    @id @default(cuid())
+  repositoryId    String
+  githubSha       String    @unique
+  message         String
+  authorName      String
+  authorEmail     String
+  committedAt     DateTime
+  addedLines      Int       @default(0)
+  deletedLines    Int       @default(0)
+  createdAt       DateTime  @default(now())
+
+  // Relations
+  repository      Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  comments        Comment[]
+
+  @@index([repositoryId])
+  @@index([committedAt])
+  @@index([githubSha])
+}
+
+// ============================================================================
+// Comments & AI
+// ============================================================================
+
+model Comment {
+  id          String    @id @default(cuid())
+  mascotId    String
+  commitId    String?
+  aiCommentId String?   @unique
+  type        CommentType
+  content     String    @db.Text
+  tone        String    @default("friendly") // e.g., "friendly", "encouraging", "witty"
+  createdAt   DateTime  @default(now())
+
+  // Relations
+  mascot      Mascot    @relation(fields: [mascotId], references: [id], onDelete: Cascade)
+  commit      Commit?   @relation(fields: [commitId], references: [id], onDelete: Cascade)
+  aiComment   AIComment? @relation(fields: [aiCommentId], references: [id], onDelete: SetNull)
+
+  @@index([mascotId])
+  @@index([commitId])
+  @@index([createdAt])
+}
+
+enum CommentType {
+  COMMIT_COMMENT
+  STREAK_ACHIEVEMENT
+  LEVEL_UP
+  MILESTONE
+  DAILY_GREETING
+}
+
+model AIComment {
+  id          String    @id @default(cuid())
+  prompt      String    @db.Text
+  response    String    @db.Text
+  model       String    @default("gpt-4")
+  tokensUsed  Int       @default(0)
+  cost        Float     @default(0)
+  createdAt   DateTime  @default(now())
+
+  // Relations
+  comments    Comment[]
+
+  @@index([createdAt])
+}
+
+// ============================================================================
+// Streaks & Achievements
+// ============================================================================
+
+model Streak {
+  id          String    @id @default(cuid())
+  userId      String    @unique
+  current     Int       @default(0) // Current streak length
+  longest     Int       @default(0) // Longest streak achieved
+  lastActive  DateTime? // Last date with activity
+  startDate   DateTime? // When current streak started
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+// ============================================================================
+// Achievements
+// ============================================================================
+
+enum AchievementCode {
+  FIRST_COMMIT
+  COMMITS_100   @map("100_COMMITS")
+  COMMITS_500   @map("500_COMMITS")
+  COMMITS_1000  @map("1000_COMMITS")
+  FIRST_PR
+  PRS_10        @map("10_PRS")
+  PRS_50        @map("50_PRS")
+  PRS_100       @map("100_PRS")
+  STREAK_7
+  STREAK_30
+  STREAK_100
+  STREAK_365
+  LEVEL_5
+  LEVEL_10
+  LEVEL_25
+  LEVEL_50
+}
+
+model UserAchievement {
+  id          String           @id @default(cuid())
+  userId      String
+  code        AchievementCode  // Achievement code, e.g. AchievementCode.FIRST_COMMIT
+  unlockedAt  DateTime         @default(now())
+  createdAt   DateTime         @default(now())
+
+  // Relations
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, code]) // Guarantees a single unlock per achievement
+  @@index([userId])
+}
